@@ -1,24 +1,26 @@
 package com.gui.cryptoranking.service;
 
-import com.gui.cryptoranking.enums.TimePeriod;
-import com.gui.cryptoranking.model.CoinData;
-import com.gui.cryptoranking.model.CoinInfo;
-import com.gui.cryptoranking.model.CoinPriceHistory;
-import com.gui.cryptoranking.model.Coins;
+import com.gui.cryptoranking.model.*;
 import com.gui.cryptoranking.utils.HttpUtils;
 import io.github.dengliming.redismodule.redisjson.RedisJSON;
 import io.github.dengliming.redismodule.redisjson.args.GetArgs;
 import io.github.dengliming.redismodule.redisjson.args.SetArgs;
 import io.github.dengliming.redismodule.redisjson.utils.GsonUtils;
+import io.github.dengliming.redismodule.redistimeseries.DuplicatePolicy;
 import io.github.dengliming.redismodule.redistimeseries.RedisTimeSeries;
+import io.github.dengliming.redismodule.redistimeseries.Sample;
+import io.github.dengliming.redismodule.redistimeseries.TimeSeriesOptions;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.List;
+import java.util.Map;
+
+import static java.lang.Double.parseDouble;
+import static java.lang.Long.parseLong;
 
 @Service
 @Slf4j
@@ -29,10 +31,10 @@ public class CoinsDataService {
     private static String euroTetherCurrency = "Okg3HKa3L";
 
     public String GET_COINS_API = "https://coinranking1.p.rapidapi.com/coins?referenceCurrencyUuid=" + euroCurrency
-            + "&timePeriod=" + TimePeriod.twenty_four_hours.value() + "&tiers=1&orderBy=marketCap&orderDirection=desc&limit=50&offset=0";
+            + "&timePeriod=" + timePeriods.get(0) + "&tiers=1&orderBy=marketCap&orderDirection=desc&limit=50&offset=0";
     public static final String GET_COIN_HISTORY_API = "https://coinranking1.p.rapidapi.com/coin/";
     public static final String COIN_HISTORY_TIME_PERIOD_PARAM = "/history?timePeriod=";
-    public static final List<String> timePeriods = List.of(TimePeriod.values().toString());
+    public static final List<String> timePeriods = List.of("24h", "7d", "30d", "3m", "1y", "3y", "5y");
     public static final String REDIS_KEY_COINS = "coins";
 
     private final RestTemplate restTemplate;
@@ -58,7 +60,7 @@ public class CoinsDataService {
         storeCoinstoRedisJSON(coinsResponseEntity.getBody());
     }
 
-    public void fetchCoinHistory(String coinUuid) {
+    public void fetchCoinHistory() {
 
         log.info("fetchCoinHistory() method called");
 
@@ -100,8 +102,36 @@ public class CoinsDataService {
                 HttpMethod.GET, HttpUtils.getHttpEntity(),
                 CoinPriceHistory.class);
 
+        List<CoinPriceHistoryExchangeRate> coinPriceHistoryExchangeRates = coinHistoryResponseEntity.getBody().getData().getHistory();
+
         // guardamos en Redis en la key pasada, en el path especificado y en formato JSON
-        redisJSON.set(coin.getUuid() + timePeriod,
-                SetArgs.Builder.create(".", GsonUtils.toJson(coinHistoryResponseEntity.getBody())));
+        // Sample es cada "tabla" que guarda en Redis
+        coinPriceHistoryExchangeRates.stream()
+                .filter(ch -> ch.getPrice() != null && ch.getTimestamp() != null)
+                .forEach(ch -> {
+                    redisTimeSeries.add(
+                            new Sample(
+                                    coin.getSymbol() + ":" + timePeriod, Sample.Value.of(
+                                            parseLong(ch.getTimestamp()), parseDouble(ch.getPrice()))),
+                            new TimeSeriesOptions().unCompressed().duplicatePolicy(DuplicatePolicy.LAST));
+                });
+    }
+
+    public List<CoinInfo> fetchAllCoinsFromRedisJSON() {
+
+        return getAllCoinsInfoFromRedisJSON();
+    }
+
+    public List<Sample.Value> fetchCoinHistoryPerTimePeriodFromRedisTS(String symbol, String timePeriod) {
+
+        // en la info recuperamos firstTimestamp y lastTimestamp para obtener el rango de tiempo
+        Map<String, Object> TSinfoForSymbol = redisTimeSeries.info(symbol + ":" + timePeriod);
+
+        Long firstTimestamp = (Long) TSinfoForSymbol.get("firstTimestamp");
+        Long lastTimestamp = (Long) TSinfoForSymbol.get("lastTimestamp");
+
+        String key = symbol + ":" + timePeriod;
+
+        return redisTimeSeries.range(key, firstTimestamp, lastTimestamp);
     }
 }

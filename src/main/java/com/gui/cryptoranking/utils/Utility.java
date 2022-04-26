@@ -10,12 +10,11 @@ public class Utility {
 
     public static String convertUnixTimeToDate(Long unixTime) {
         final DateTimeFormatter formatter =
-                DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+                DateTimeFormatter.ofPattern("dd-MM-yyyy HH:mm:ss");
 
-        final String formattedDtm = Instant.ofEpochSecond(unixTime)
-                .atZone(ZoneId.of("GMT"))
+        return Instant.ofEpochSecond(unixTime)
+                .atZone(ZoneId.of("GMT+1"))
                 .format(formatter);
-        return formattedDtm;
     }
 
     public static double round(double value, int places) {
