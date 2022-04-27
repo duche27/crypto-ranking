@@ -30,7 +30,7 @@ public class CoinsRankingController {
         log.info("Fetching all coins");
 
 //        return ResponseEntity.ok(coinsDataService.fetchAllCoinsFromRedisJSON());
-        return ResponseEntity.ok().body(coinsDataService.fetchAllCoinsFromRedisJSON());
+        return ResponseEntity.ok().body(coinsDataService.getAllCoinsInfoFromRedisJSON());
     }
 
     @GetMapping("/{symbol}/{timePeriod}")

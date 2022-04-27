@@ -19,6 +19,6 @@ public class ApplicationStartup implements ApplicationListener<ApplicationReadyE
 
 //        crear una tarea que lo ejecute una vez al día para mantener la api actualizada
 //        coinsDataService.fetchCoins();
-//        coinsDataService.fetchCoinHistory();
+//        coinsDataService.fetchAllCoinsHistory();
     }
 }

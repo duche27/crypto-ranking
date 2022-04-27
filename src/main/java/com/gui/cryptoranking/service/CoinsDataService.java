@@ -18,6 +18,7 @@ import org.springframework.web.client.RestTemplate;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 import static java.lang.Double.parseDouble;
 import static java.lang.Long.parseLong;
@@ -47,6 +48,7 @@ public class CoinsDataService {
         this.redisTimeSeries = redisTimeSeries;
     }
 
+    // llamamos al servicio y recuperamos la info de las 50 primeras monedas y las guardamos como JSON en Redis
     public void fetchCoins() {
 
         log.info("fechtCoins() method called");
@@ -57,10 +59,16 @@ public class CoinsDataService {
                 HttpMethod.GET, HttpUtils.getHttpEntity(),
                 Coins.class);
 
-        storeCoinstoRedisJSON(coinsResponseEntity.getBody());
+        Coins coins = coinsResponseEntity.getBody();
+
+        // guardamos en Redis en la key pasada, en el path especificado y en formato JSON
+        redisJSON.set(
+                REDIS_KEY_COINS,
+                SetArgs.Builder.create(".", GsonUtils.toJson(coins)));
     }
 
-    public void fetchCoinHistory() {
+    // recuperamos las monedas de Redis y para cada una llamamos al servicio para recuperar la serie histórica para cada periodo
+    public void fetchAllCoinsHistory() {
 
         log.info("fetchCoinHistory() method called");
 
@@ -73,15 +81,8 @@ public class CoinsDataService {
         });
     }
 
-    private void storeCoinstoRedisJSON(Coins coins) {
-
-        // guardamos en Redis en la key pasada, en el path especificado y en formato JSON
-        redisJSON.set(
-                REDIS_KEY_COINS,
-                SetArgs.Builder.create(".", GsonUtils.toJson(coins)));
-    }
-
-    private List<CoinInfo> getAllCoinsInfoFromRedisJSON() {
+    // recuperamos todas las monedas de Redis (en JSON)
+    public List<CoinInfo> getAllCoinsInfoFromRedisJSON() {
 
         // obtenemos de Redis toda la info histórica de todas las monedas previamente guardadas en el path y con el formato especificado
         CoinData coinData = redisJSON.get(
@@ -92,6 +93,7 @@ public class CoinsDataService {
         return coinData.getCoins();
     }
 
+    // guardamos en Redis todas las TS para la posterior llamada a nuestra API
     private void fetchCoinHistoryForTimePeriod(CoinInfo coin, String timePeriod) {
 
         log.info("Fetching coin history for: COIN " + coin.getName() + " - TIME PERIOD " + timePeriod);
@@ -102,26 +104,25 @@ public class CoinsDataService {
                 HttpMethod.GET, HttpUtils.getHttpEntity(),
                 CoinPriceHistory.class);
 
-        List<CoinPriceHistoryExchangeRate> coinPriceHistoryExchangeRates = coinHistoryResponseEntity.getBody().getData().getHistory();
+        List<CoinPriceHistoryExchangeRate> coinPriceHistoryExchangeRates = Objects.requireNonNull
+                (coinHistoryResponseEntity.getBody()).getData().getHistory();
 
-        // guardamos en Redis en la key pasada, en el path especificado y en formato JSON
-        // Sample es cada "tabla" que guarda en Redis
+        // guardamos en Redis en la key pasada, en el path especificado y en formato TS
+        // RedisTimeSeries es cada "tabla" TS (TimeSeries) que guarda en Redis
+        // se compone de un Sample: nombre tabla (key) + datos de tabla: x,y = key,value = timestamp,price (o lo q sea con timestamp xq es una TS)
+        // y de unas opciones: sin comprimir y la política de publicidad en este caso
         coinPriceHistoryExchangeRates.stream()
-                .filter(ch -> ch.getPrice() != null && ch.getTimestamp() != null)
+                .filter(ch -> ch.getPrice() != null && ch.getTimestamp() != null)       // comprobamos que ni key ni value son null
                 .forEach(ch -> {
                     redisTimeSeries.add(
                             new Sample(
                                     coin.getSymbol() + ":" + timePeriod, Sample.Value.of(
-                                            parseLong(ch.getTimestamp()), parseDouble(ch.getPrice()))),
+                                    parseLong(ch.getTimestamp()), parseDouble(ch.getPrice()))),
                             new TimeSeriesOptions().unCompressed().duplicatePolicy(DuplicatePolicy.LAST));
                 });
     }
 
-    public List<CoinInfo> fetchAllCoinsFromRedisJSON() {
-
-        return getAllCoinsInfoFromRedisJSON();
-    }
-
+    // recuperamos de Redis todas las TS para servirlas
     public List<Sample.Value> fetchCoinHistoryPerTimePeriodFromRedisTS(String symbol, String timePeriod) {
 
         // en la info recuperamos firstTimestamp y lastTimestamp para obtener el rango de tiempo
